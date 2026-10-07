@@ -11,13 +11,14 @@ function fixture() {
     const win = { webContents: sender, isDestroyed: () => false };
     const event = { sender, senderFrame: sender.mainFrame };
     const client = { pid: 77, class: "vesktop", xwayland: true, address: "0xabc", inhibitingIdle: false };
-    const calls: string[][] = [];
+    const calls: string[][] = []; const warnings: string[] = [];
     let clients = [client]; let windows = [win]; let now = 0; let tick = () => {};
+    let timers = 0;
     let effective = true; let fail = false; let gate: Promise<void> | undefined;
     const host = {
-        pid: 77, available: () => true, now: () => now,
+        warn: (reason: string) => { warnings.push(reason); }, pid: 77, available: () => true, now: () => now,
         windows: () => windows, fromWebContents: (s: any) => windows.find(w => w.webContents === s),
-        setInterval: (fn: () => void) => { tick = fn; return 1; }, clearInterval: () => { tick = () => {}; },
+        setInterval: (fn: () => void) => { tick = fn; timers++; return 1; }, clearInterval: () => { tick = () => {}; timers--; },
         run: async (args: string[]) => {
             calls.push(args);
             if (gate) await gate;
@@ -28,8 +29,8 @@ function fixture() {
         }
     };
     const control = createController(host);
-    return { control, event, sender, client, calls, host,
-        setClients: (v: any[]) => { clients = v; }, setWindows: (v: any[]) => { windows = v; },
+    return { control, event, sender, client, calls, warnings, host,
+        timers: () => timers, setClients: (v: any[]) => { clients = v; }, setWindows: (v: any[]) => { windows = v; },
         setFailure: (v: boolean) => { fail = v; }, setEffective: (v: boolean) => { effective = v; },
         setGate: (v?: Promise<void>) => { gate = v; }, expire: () => { now = 7000; tick(); } };
 }
@@ -133,4 +134,46 @@ test("popout uncertainty keeps the established main window awake, never controls
     assert.equal(f.client.inhibitingIdle, true);
     assert.equal(dispatches(f).length, 1);
     await f.control.update(f.event, { stop: true });
+});
+
+
+test("expiry retires the lease timer even when initial control was unsupported", async () => {
+    const f = fixture(); f.setClients([]);
+    assert.equal((await f.control.update(f.event, { keep: true })).ok, false);
+    assert.equal(f.timers(), 1);
+    f.expire(); await settle();
+    assert.equal(f.timers(), 0);
+});
+
+test("stop during dispatch drains the pending write before clearing; failed cleanup retries", async () => {
+    const f = fixture(); const run = f.host.run; let unblock!: () => void;
+    let blocked = false;
+    const barrier = new Promise<void>(resolve => { unblock = resolve; });
+    f.host.run = async args => {
+        if (args[0] === "dispatch" && !blocked) { blocked = true; await barrier; }
+        return run(args);
+    };
+    const enabled = f.control.update(f.event, { keep: true }); await settle();
+    assert.equal(blocked, true);
+    const disabled = f.control.update(f.event, { stop: true });
+    unblock(); await enabled; await disabled;
+    assert.equal(f.client.inhibitingIdle, false);
+    assert.deepEqual(dispatches(f).map(a => a[1].match(/value="(\d)"/)![1]), ["1", "0"]);
+    await f.control.update(f.event, { keep: true }); f.setFailure(true);
+    assert.equal((await f.control.update(f.event, { stop: true })).ok, false);
+    assert.equal(f.client.inhibitingIdle, true);
+    f.setFailure(false); f.expire(); await settle();
+    assert.equal(f.client.inhibitingIdle, false);
+    assert.equal(f.timers(), 0);
+});
+
+
+test("crash cleanup failure warns without leaking command details, then retries", async () => {
+    const f = fixture(); await f.control.update(f.event, { keep: true });
+    f.setFailure(true); f.sender.emit("render-process-gone"); await settle();
+    assert.equal(f.warnings.length, 1);
+    assert.match(f.warnings[0], /failed|timed out/);
+    assert.equal(f.warnings[0].includes("private"), false);
+    f.setFailure(false); f.expire(); await settle();
+    assert.equal(f.client.inhibitingIdle, false);
 });

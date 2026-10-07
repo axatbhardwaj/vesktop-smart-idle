@@ -72,3 +72,23 @@ test("missing, throwing, and malformed getters remain unknown and keep awake", (
     }
     assert.deepEqual(observe(undefined, dom()), { keep: true, uncertain: true });
 });
+
+
+test("distinct degraded conditions are visible once each; disable follows a rejected in-flight IPC", async () => {
+    let resolve!: (value: any) => void;
+    let reject!: (error: Error) => void;
+    let tick = () => {};
+    const warnings: string[] = []; const messages: any[] = [];
+    let sends = 0;
+    const stop = startRenderer(() => ({ keep: true, uncertain: true }), message => {
+        messages.push(message); sends++;
+        if (sends === 1) return Promise.resolve({ ok: false, error: "Unsupported XWayland" });
+        return new Promise((res, rej) => { resolve = res; reject = rej; });
+    }, reason => warnings.push(reason), { setInterval: (fn: () => void) => { tick = fn; return 1; }, clearInterval() {} });
+    await flush();
+    assert.equal(warnings.length, 2);
+    tick(); await flush(); stop(); reject(Error("IPC gone")); await flush();
+    assert.deepEqual(messages.at(-1), { stop: true });
+    resolve({ ok: true }); await flush();
+    assert.equal(warnings.filter(w => w.includes("Unknown")).length, 1);
+});

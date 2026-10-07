@@ -8,6 +8,7 @@ import { createController } from "./controller.ts";
 let controller: ReturnType<typeof createController> | undefined;
 export function update(event: IpcMainInvokeEvent, message: unknown) {
     controller ??= createController({
+        warn: reason => console.warn("[SmartIdle]", reason),
         pid: process.pid,
         available: () => process.platform === "linux" && Boolean(process.env.HYPRLAND_INSTANCE_SIGNATURE),
         now: () => performance.now(),

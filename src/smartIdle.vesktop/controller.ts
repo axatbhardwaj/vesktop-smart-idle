@@ -3,7 +3,7 @@ import type { BrowserWindow, IpcMainInvokeEvent, WebContents } from "electron";
 import type { Result } from "./renderer.ts";
 
 type Host = {
-    pid: number; available(): boolean; now(): number;
+    warn(reason: string): void; pid: number; available(): boolean; now(): number;
     windows(): BrowserWindow[]; fromWebContents(sender: WebContents): BrowserWindow | undefined | null;
     run(args: string[]): Promise<string>;
     setInterval(fn: () => void, ms: number): any; clearInterval(id: any): void;
@@ -30,8 +30,13 @@ export function createController(host: Host) {
         return data;
     };
     const failure = (error: string): Result => ({ ok: false, error });
+    const retire = () => {
+        address = undefined;
+        if (timer !== undefined) host.clearInterval(timer);
+        timer = undefined;
+    };
     const apply = async (): Promise<Result> => {
-        if (!active && !address) return { ok: true };
+        if (!active && !address) { retire(); return { ok: true }; }
         if (!host.available()) return failure("Unsupported: requires Hyprland and XWayland Vesktop.");
         let list = await clients();
         if (!address) {
@@ -53,7 +58,8 @@ export function createController(host: Host) {
             const after = (await clients()).filter(c => c.address === address && owned(c));
             if (after.length !== 1 || after[0].inhibitingIdle !== desired) return failure("Idle property did not take effect; keep the main window mapped and check for competing rules.");
         }
-        if (!active) { address = undefined; host.clearInterval(timer); timer = undefined; }
+        // Stop may arrive during an enabling dispatch. Retain ownership until 0 drains.
+        if (!active && !desired) retire();
         return { ok: true, uncertain };
     };
     const drain = async (): Promise<Result> => {
@@ -68,7 +74,8 @@ export function createController(host: Host) {
         } finally { running = undefined; }
     };
     const schedule = () => { version++; return running ??= drain(); };
-    const release = () => { active = false; keep = false; void schedule(); };
+    const cleanup = () => { void schedule().then(result => { if (!result.ok) host.warn(result.error!); }); };
+    const release = () => { active = false; keep = false; cleanup(); };
     return {
         async update(event: IpcMainInvokeEvent, message: unknown): Promise<Result> {
             if (!message || typeof message !== "object" || Array.isArray(message) || Object.keys(message).length !== 1 ||
@@ -89,7 +96,7 @@ export function createController(host: Host) {
             else { active = true; keep = message.keep; heartbeat = host.now(); }
             if (active && timer === undefined) timer = host.setInterval(() => {
                 if (active && host.now() - heartbeat >= 6000) release();
-                else if (!active && address) void schedule();
+                else if (!active && address) cleanup();
             }, 1000);
             return schedule();
         }

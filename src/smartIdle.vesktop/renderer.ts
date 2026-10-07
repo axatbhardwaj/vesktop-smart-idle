@@ -33,8 +33,8 @@ export function startRenderer(
     let stopped = false;
     let busy = false;
     let pending = false;
-    let warned = false;
-    const warning = (reason: string) => { if (!warned) { warned = true; warn(reason); } };
+    const warned = new Set<string>();
+    const warning = (reason: string) => { if (!warned.has(reason)) { warned.add(reason); warn(reason); } };
     const tick = async () => {
         if (busy) { pending = true; return; }
         busy = true;
