@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import type { BrowserWindow, IpcMainInvokeEvent, WebContents } from "electron";
-import type { Result } from "./renderer.ts";
+import type { Message, Result } from "./renderer.ts";
 
 type Host = {
     warn(reason: string): void; pid: number; available(): boolean; now(): number;
@@ -12,6 +12,15 @@ type Client = { pid: number; class: string; xwayland: boolean; address: string; 
 const origins = new Set(["https://discord.com", "https://canary.discord.com", "https://ptb.discord.com"]);
 function discord(url: string) {
     try { const u = new URL(url); return origins.has(u.origin) && !u.username && !u.password; } catch { return false; }
+}
+
+function validMessage(message: unknown): message is Message {
+    if (!message || typeof message !== "object" || Array.isArray(message)) return false;
+    const keys = Object.keys(message);
+    return keys.length === 1 && (
+        keys[0] === "keep" && "keep" in message && typeof message.keep === "boolean" ||
+        keys[0] === "stop" && "stop" in message && message.stop === true
+    );
 }
 
 export function createController(host: Host) {
@@ -78,8 +87,7 @@ export function createController(host: Host) {
     const release = () => { active = false; keep = false; cleanup(); };
     return {
         async update(event: IpcMainInvokeEvent, message: unknown): Promise<Result> {
-            if (!message || typeof message !== "object" || Array.isArray(message) || Object.keys(message).length !== 1 ||
-                !("keep" in message && typeof message.keep === "boolean" || "stop" in message && message.stop === true)) return failure("Invalid SmartIdle message.");
+            if (!validMessage(message)) return failure("Invalid SmartIdle message.");
             const frame = event.senderFrame;
             const win = host.fromWebContents(event.sender);
             if (!frame || event.sender.isDestroyed() || frame !== event.sender.mainFrame || frame.parent || frame.name ||
