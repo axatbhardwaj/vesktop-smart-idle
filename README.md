@@ -87,9 +87,18 @@ transitions; it does not prove a connected voice transport.
 Missing, malformed, or throwing store getters **warn and keep awake** while
 the renderer remains healthy. Main-document iframes and detected Discord
 popouts also keep awake conservatively. The sole iframe exception is a hidden,
-readable `about:blank` document with absent `src`/`srcdoc`, only its normal
-head/body elements, and no content in either. It is checked again each poll;
-media, navigation, visible styling, or unavailable DOM restores protection.
+readable `about:blank` document with absent `src`/`srcdoc`, an
+HTML root with its current HEAD then BODY as the only element children,
+an empty body, and only SCRIPT head nodes with no element children. Root
+comments/whitespace and script text are allowed; script count is unrestricted.
+Any descendant video, audio, iframe, object, or embed vetoes the exception.
+It is checked again each poll; media, navigation, visible styling, or
+unavailable DOM restores protection.
+
+**This exception relaxes the previous blanket iframe protection.** Qualifying
+scripts may play unobservable detached media or WebAudio and now permit idle;
+the old guard conservatively kept those script-bearing frames awake. This
+observer protects the described observable media, not arbitrary script audio.
 Playback inside other frames or popouts remains uncertain. Hidden/autoplay
 videos, unrelated embeds, or paused popouts may therefore over-inhibit. Undetected playback in other windows or documents is
 not covered. Notifications are deduplicated for each condition until the

@@ -93,11 +93,22 @@ test("distinct degraded conditions are visible once each; disable follows a reje
     assert.equal(warnings.filter(w => w.includes("Unknown")).length, 1);
 });
 
-function blankFrame() {
+// Inert topology fixture: derives children and selector results from one tree.
+function element(tagName: string, ...nodes: any[]): any {
+    return { tagName, childNodes: nodes, get children() { return this.childNodes.filter((n: any) => n?.tagName); } };
+}
+function blankFrame(scripts = 0) {
     const style = { display: "block", visibility: "hidden" };
+    const root = element("HTML", element("HEAD", ...Array.from({ length: scripts }, () => element("SCRIPT"))), element("BODY"));
     const child = {
-        URL: "about:blank", documentElement: { children: [{}, {}] },
-        head: { childNodes: [] as any[] }, body: { childNodes: [] as any[] }
+        URL: "about:blank", documentElement: root,
+        get head() { return root.children.find((n: any) => n.tagName === "HEAD") ?? null; },
+        get body() { return root.children.find((n: any) => n.tagName === "BODY") ?? null; },
+        querySelectorAll(selector: string) {
+            const hits: any[] = [];
+            const visit = (node: any) => { for (const n of node.children) { if (selector.split(",").includes(n.tagName.toLowerCase())) hits.push(n); visit(n); } };
+            visit(root); return hits;
+        }
     };
     const attributes = new Map<string, string>();
     const frame = {
@@ -106,7 +117,7 @@ function blankFrame() {
         ownerDocument: { defaultView: { getComputedStyle: () => style } },
         contentDocument: child
     };
-    return { frame, style, child, attributes };
+    return { frame, style, child, attributes, root };
 }
 
 test("hidden 1x1 accessible blank implementation frame allows idle without overriding voice or media", () => {
@@ -134,12 +145,12 @@ test("only proven hidden blank frames are exempt; changes to media, navigation o
         f => { f.attributes.set("src", ""); },
         f => { f.attributes.set("srcdoc", "<video autoplay></video>"); },
         f => { f.child.URL = "https://discord.com/media"; },
-        f => { f.child.body.childNodes.push({ tagName: "VIDEO", paused: false, muted: true }); },
-        f => { f.child.body.childNodes.push({ tagName: "AUDIO", paused: false }); },
-        f => { f.child.body.childNodes.push({ tagName: "IFRAME" }); },
-        f => { f.child.body.childNodes.push({ tagName: "OBJECT" }); },
-        f => { f.child.head.childNodes.push({ tagName: "SCRIPT" }); },
-        f => { f.child.documentElement.children.push({ tagName: "VIDEO" }); }
+        f => { f.child.body.childNodes.push(element("VIDEO")); },
+        f => { f.child.body.childNodes.push(element("AUDIO")); },
+        f => { f.child.body.childNodes.push(element("IFRAME")); },
+        f => { f.child.body.childNodes.push(element("OBJECT")); },
+        f => { f.child.head.childNodes.push(element("STYLE")); },
+        f => { f.root.childNodes.push(element("VIDEO")); }
     ];
     for (const change of cases) {
         const f = blankFrame(); const doc = dom([], [f.frame]);
@@ -149,7 +160,7 @@ test("only proven hidden blank frames are exempt; changes to media, navigation o
     }
     const f = blankFrame(); f.style.display = "none"; f.style.visibility = "visible";
     assert.deepEqual(observe(stores(s), dom([], [f.frame])), { keep: false, uncertain: false });
-    f.child.body.childNodes.push({ tagName: "VIDEO" });
+    f.child.body.childNodes.push(element("VIDEO"));
     assert.deepEqual(observe(stores(s), dom([], [f.frame])), { keep: true, uncertain: true });
 });
 
@@ -160,11 +171,95 @@ test("unreadable child documents, unavailable styles, and DOM failures conservat
         f => { Object.defineProperty(f.frame, "contentDocument", { get() { throw Error("cross-origin"); } }); },
         f => { (f.frame.ownerDocument as any).defaultView = null; },
         f => { f.frame.ownerDocument.defaultView.getComputedStyle = () => { throw Error("style unavailable"); }; },
-        f => { (f.child as any).body = null; }
+        f => { Object.defineProperty(f.child, "body", { value: null }); }
     ];
     for (const change of cases) {
         const f = blankFrame(); change(f);
         assert.deepEqual(observe(stores(s), dom([], [f.frame])), { keep: true, uncertain: true });
     }
     assert.deepEqual(observe(stores(s), { querySelectorAll() { throw Error("DOM unavailable"); } } as any), { keep: true, uncertain: true });
+});
+
+
+test("script-only hidden blank frames allow idle at every count and preserve all voice/media decisions", () => {
+    for (const count of [0, 1, 2, 3]) {
+        const f = blankFrame(count);
+        // SCRIPT text is allowed, as are harmless root whitespace/comments.
+        for (const script of f.child.head.children) script.childNodes.push({ nodeType: 3, textContent: "inert" });
+        f.root.childNodes.push({ nodeType: 8 }, { nodeType: 3, textContent: " " });
+        for (let bits = 0; bits < 64; bits++) {
+            const [connected, muted, deaf, camera, sharing, video] = Array.from({ length: 6 }, (_, n) => Boolean(bits & (1 << n)));
+            const s = { connected, muted, deaf, camera, sharing, stream: null };
+            assert.deepEqual(observe(stores(s), dom(video ? [{ paused: false, ended: false, muted: true }] : [], [f.frame])),
+                { keep: camera || sharing || video || (connected && !muted && !deaf), uncertain: false }, `scripts ${count}, state ${bits}`);
+        }
+        const s = state(); s.muted = true; s.stream = {};
+        assert.deepEqual(observe(stores(s), dom([], [f.frame])), { keep: true, uncertain: false });
+    }
+});
+
+test("script descendants, direct media and substituted roots never bypass frame protection", () => {
+    const media = ["VIDEO", "AUDIO", "IFRAME", "OBJECT", "EMBED"];
+    const changes: Array<[string, (f: ReturnType<typeof blankFrame>) => void]> = [];
+    for (const tag of media) {
+        for (const where of ["head", "body"] as const)
+            changes.push([`${where} ${tag}`, f => f.child[where].childNodes.push(element(tag))]);
+        changes.push([`SCRIPT>${tag}`, f => f.child.head.children[0].childNodes.push(element(tag))],
+            [`root ${tag}`, f => f.root.childNodes.push(element(tag))],
+            [`replace HEAD ${tag}`, f => { f.root.childNodes[0] = element(tag); }],
+            [`replace BODY ${tag}`, f => { f.root.childNodes[1] = element(tag); }],
+            [`replacement HEAD>SCRIPT>${tag}`, f => { f.root.childNodes[0] = element("HEAD", element("SCRIPT", element(tag))); }]);
+    }
+    changes.push(["SCRIPT>DIV>VIDEO", f => f.child.head.children[0].childNodes.push(element("DIV", element("VIDEO")))],
+        ["SVG root", f => { f.root.tagName = "SVG"; }], ["reversed root", f => f.root.childNodes.reverse()],
+        ["stale head", f => Object.defineProperty(f.child, "head", { value: element("HEAD") })],
+        ["stale body", f => Object.defineProperty(f.child, "body", { value: element("BODY") })],
+        ["head whitespace", f => f.child.head.childNodes.push({ nodeType: 3 })],
+        ["body comment", f => f.child.body.childNodes.push({ nodeType: 8 })]);
+    for (const [name, change] of changes) for (const connected of [false, true]) {
+        const s = state(); s.connected = connected; s.muted = true;
+        const f = blankFrame(2); const doc = dom([], [f.frame]);
+        assert.deepEqual(observe(stores(s), doc), { keep: false, uncertain: false }, `${name} before`);
+        change(f);
+        assert.deepEqual(observe(stores(s), doc), { keep: true, uncertain: true }, name);
+    }
+});
+
+test("script frames retain navigation, visibility and unavailable DOM guards", () => {
+    const changes: Array<(f: ReturnType<typeof blankFrame>) => void> = [
+        f => { f.style.visibility = "visible"; }, f => f.attributes.set("src", ""), f => f.attributes.set("srcdoc", ""),
+        f => { f.child.URL = "https://example.invalid/"; },
+        f => { (f.frame as any).contentDocument = null; },
+        f => Object.defineProperty(f.frame, "contentDocument", { get() { throw Error("cross-origin"); } }),
+        f => { (f.frame.ownerDocument as any).defaultView = null; },
+        f => { f.frame.ownerDocument.defaultView.getComputedStyle = () => { throw Error("style"); }; },
+        f => Object.defineProperty(f.child, "head", { value: null }), f => Object.defineProperty(f.child, "body", { value: null }),
+        f => { (f.child as any).documentElement = null; },
+        f => Object.defineProperty(f.child.head, "childNodes", { get() { throw Error("DOM gone"); } }),
+        f => { f.child.querySelectorAll = () => { throw Error("query unavailable"); }; }
+    ];
+    for (const change of changes) {
+        const f = blankFrame(2); const s = state(); s.connected = false; change(f);
+        assert.deepEqual(observe(stores(s), dom([], [f.frame])), { keep: true, uncertain: true });
+    }
+    const f = blankFrame(2); f.style.display = "none"; f.style.visibility = "visible";
+    const s = state(); s.muted = true;
+    assert.deepEqual(observe(stores(s), dom([], [f.frame])), { keep: false, uncertain: false });
+});
+
+test("polling does not flap with scripts and re-inhibits for inserted media or navigation", async () => {
+    for (const tag of ["VIDEO", "AUDIO", "IFRAME", "OBJECT", "EMBED"]) {
+        const f = blankFrame(); const s = state(); s.muted = true;
+        let tick = () => {}; const messages: any[] = [];
+        const stop = startRenderer(() => observe(stores(s), dom([], [f.frame])), async m => { messages.push(m); return { ok: true }; }, () => {},
+            { setInterval: fn => { tick = fn; return 1; }, clearInterval() {} });
+        await flush();
+        for (let n = 0; n < 3; n++) { f.child.head.childNodes.push(element("SCRIPT")); tick(); await flush(); }
+        f.child.head.children[0].childNodes.push(element(tag)); tick(); await flush();
+        f.child.head.children[0].childNodes.pop(); tick(); await flush();
+        f.child.URL = "https://example.invalid/"; tick(); await flush();
+        f.child.URL = "about:blank"; f.child.head.childNodes.length = 0; tick(); await flush();
+        stop(); await flush();
+        assert.deepEqual(messages, [false, false, false, false, true, false, true, false].map(keep => ({ keep })).concat([{ stop: true }] as any), tag);
+    }
 });
