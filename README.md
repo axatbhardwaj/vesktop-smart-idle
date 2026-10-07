@@ -34,12 +34,26 @@ revision is still checked. Vencord source and build outputs are not vendored.
 In Vesktop, open **Settings → Vesktop Settings → Developer Options →
 Vencord Location** and choose the new checkout's `dist` directory. Use the
 existing picker; do not edit `settings.json`. The picker persists
-`state.store.vencordDir` and requires these four files:
+`state.store.vencordDir`. Select or copy the **whole `dist` directory**, keeping
+its metadata and sidecars alongside these four bundles:
 
 - `vencordDesktopMain.js`
 - `vencordDesktopPreload.js`
 - `vencordDesktopRenderer.js`
 - `vencordDesktopRenderer.css`
+
+Installed Vesktop 1.6.7 also requires `package.json` in that directory; missing
+metadata can trigger a stock Vencord download that replaces the custom build.
+The pinned upstream build may omit it. For the new build above, preserve any
+existing metadata or create the empty metadata used by that Vesktop version:
+
+```sh
+[ -e .build/dist/package.json ] || printf '{}\n' > .build/dist/package.json
+```
+
+Keep this file with the entire `dist` when installing, updating, or retaining
+a rollback build. This requirement is verified for Vesktop 1.6.7, rather than
+assumed for every Vesktop version.
 
 Fully quit Vesktop, then launch it with:
 
@@ -87,9 +101,18 @@ transitions; it does not prove a connected voice transport.
 Missing, malformed, or throwing store getters **warn and keep awake** while
 the renderer remains healthy. Main-document iframes and detected Discord
 popouts also keep awake conservatively. The sole iframe exception is a hidden,
-readable `about:blank` document with absent `src`/`srcdoc`, only its normal
-head/body elements, and no content in either. It is checked again each poll;
-media, navigation, visible styling, or unavailable DOM restores protection.
+readable `about:blank` document with absent `src`/`srcdoc`, an
+HTML root with its current HEAD then BODY as the only element children,
+an empty body, and only SCRIPT head nodes with no element children. Root
+comments/whitespace and script text are allowed; script count is unrestricted.
+Any descendant video, audio, iframe, object, or embed vetoes the exception.
+It is checked again each poll; media, navigation, visible styling, or
+unavailable DOM restores protection.
+
+**This exception relaxes the previous blanket iframe protection.** Qualifying
+scripts may play unobservable detached media or WebAudio and now permit idle;
+the old guard conservatively kept those script-bearing frames awake. This
+observer protects the described observable media, not arbitrary script audio.
 Playback inside other frames or popouts remains uncertain. Hidden/autoplay
 videos, unrelated embeds, or paused popouts may therefore over-inhibit. Undetected playback in other windows or documents is
 not covered. Notifications are deduplicated for each condition until the

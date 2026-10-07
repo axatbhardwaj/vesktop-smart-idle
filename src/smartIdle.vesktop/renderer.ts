@@ -21,11 +21,14 @@ export function observe(stores: Sources, document: Pick<Document, "querySelector
             if (frame.getAttribute("src") !== null || frame.getAttribute("srcdoc") !== null) return true;
             const style = frame.ownerDocument.defaultView?.getComputedStyle(frame);
             const child = frame.contentDocument;
-            // Exempt a hidden implementation frame only when its document is proven empty.
+            // Limit the exception to observable media absence; scripts may still hold detached/WebAudio media.
             const hidden = style?.display === "none" || style?.visibility === "hidden";
             return !(hidden && child?.URL === "about:blank" &&
-                child.documentElement?.children.length === 2 &&
-                child.head?.childNodes.length === 0 && child.body?.childNodes.length === 0);
+                child.documentElement?.tagName === "HTML" && child.documentElement.children.length === 2 &&
+                child.head?.tagName === "HEAD" && child.body?.tagName === "BODY" &&
+                child.documentElement.children[0] === child.head && child.documentElement.children[1] === child.body &&
+                Array.from(child.head.childNodes).every(node => (node as Element).tagName === "SCRIPT" && (node as Element).children.length === 0) &&
+                child.body.childNodes.length === 0 && child.querySelectorAll("video,audio,iframe,object,embed").length === 0);
         });
         return { keep: Boolean(video || camera || sharing || stream || (channel && !muted && !deaf) || uncertain), uncertain };
     } catch {
