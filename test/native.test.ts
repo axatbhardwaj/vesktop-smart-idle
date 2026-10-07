@@ -65,6 +65,8 @@ test("schema, origin, frame, BrowserWindow, and bound-renderer failures cannot m
     const other = Object.assign(new EventEmitter(), { mainFrame: { ...f.sender.mainFrame, name: "popout" }, isDestroyed: () => false });
     f.setWindows([{ webContents: f.sender, isDestroyed: () => false }, { webContents: other, isDestroyed: () => false }]);
     assert.equal((await f.control.update({ sender: other, senderFrame: other.mainFrame }, { keep: true })).ok, false);
+    other.mainFrame.name = "";
+    assert.equal((await f.control.update({ sender: other, senderFrame: other.mainFrame }, { keep: true })).ok, false, "even an unnamed other main frame cannot replace the bound renderer");
     await f.control.update(f.event, { stop: true });
     assert.equal(dispatches(f).length, 2);
 });
