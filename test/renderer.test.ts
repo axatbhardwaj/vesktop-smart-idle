@@ -92,3 +92,79 @@ test("distinct degraded conditions are visible once each; disable follows a reje
     resolve({ ok: true }); await flush();
     assert.equal(warnings.filter(w => w.includes("Unknown")).length, 1);
 });
+
+function blankFrame() {
+    const style = { display: "block", visibility: "hidden" };
+    const child = {
+        URL: "about:blank", documentElement: { children: [{}, {}] },
+        head: { childNodes: [] as any[] }, body: { childNodes: [] as any[] }
+    };
+    const attributes = new Map<string, string>();
+    const frame = {
+        getAttribute: (name: string) => attributes.get(name) ?? null,
+        getBoundingClientRect: () => ({ width: 1, height: 1 }),
+        ownerDocument: { defaultView: { getComputedStyle: () => style } },
+        contentDocument: child
+    };
+    return { frame, style, child, attributes };
+}
+
+test("hidden 1x1 accessible blank implementation frame allows idle without overriding voice or media", () => {
+    const { frame } = blankFrame();
+    const s = state(); s.connected = false; s.muted = true; s.deaf = true;
+    const doc = dom([], [frame]);
+    assert.deepEqual(observe(stores(s), doc), { keep: false, uncertain: false });
+    s.connected = true;
+    assert.deepEqual(observe(stores(s), doc), { keep: false, uncertain: false });
+    s.muted = false; s.deaf = false;
+    assert.equal(observe(stores(s), doc).keep, true);
+    s.muted = true; s.camera = true;
+    assert.equal(observe(stores(s), doc).keep, true);
+    s.camera = false; s.sharing = true;
+    assert.equal(observe(stores(s), doc).keep, true);
+    s.sharing = false;
+    assert.equal(observe(stores(s), dom([{ paused: false, ended: false, muted: true }], [frame])).keep, true);
+});
+
+test("only proven hidden blank frames are exempt; changes to media, navigation or visibility re-inhibit", () => {
+    const s = state(); s.connected = false;
+    const cases: Array<(f: ReturnType<typeof blankFrame>) => void> = [
+        f => { f.style.visibility = "visible"; },
+        f => { f.attributes.set("src", "https://video.example/embed"); },
+        f => { f.attributes.set("src", ""); },
+        f => { f.attributes.set("srcdoc", "<video autoplay></video>"); },
+        f => { f.child.URL = "https://discord.com/media"; },
+        f => { f.child.body.childNodes.push({ tagName: "VIDEO", paused: false, muted: true }); },
+        f => { f.child.body.childNodes.push({ tagName: "AUDIO", paused: false }); },
+        f => { f.child.body.childNodes.push({ tagName: "IFRAME" }); },
+        f => { f.child.body.childNodes.push({ tagName: "OBJECT" }); },
+        f => { f.child.head.childNodes.push({ tagName: "SCRIPT" }); },
+        f => { f.child.documentElement.children.push({ tagName: "VIDEO" }); }
+    ];
+    for (const change of cases) {
+        const f = blankFrame(); const doc = dom([], [f.frame]);
+        assert.deepEqual(observe(stores(s), doc), { keep: false, uncertain: false });
+        change(f);
+        assert.deepEqual(observe(stores(s), doc), { keep: true, uncertain: true });
+    }
+    const f = blankFrame(); f.style.display = "none"; f.style.visibility = "visible";
+    assert.deepEqual(observe(stores(s), dom([], [f.frame])), { keep: false, uncertain: false });
+    f.child.body.childNodes.push({ tagName: "VIDEO" });
+    assert.deepEqual(observe(stores(s), dom([], [f.frame])), { keep: true, uncertain: true });
+});
+
+test("unreadable child documents, unavailable styles, and DOM failures conservatively protect", () => {
+    const s = state(); s.connected = false;
+    const cases: Array<(f: ReturnType<typeof blankFrame>) => void> = [
+        f => { (f.frame as any).contentDocument = null; },
+        f => { Object.defineProperty(f.frame, "contentDocument", { get() { throw Error("cross-origin"); } }); },
+        f => { (f.frame.ownerDocument as any).defaultView = null; },
+        f => { f.frame.ownerDocument.defaultView.getComputedStyle = () => { throw Error("style unavailable"); }; },
+        f => { (f.child as any).body = null; }
+    ];
+    for (const change of cases) {
+        const f = blankFrame(); change(f);
+        assert.deepEqual(observe(stores(s), dom([], [f.frame])), { keep: true, uncertain: true });
+    }
+    assert.deepEqual(observe(stores(s), { querySelectorAll() { throw Error("DOM unavailable"); } } as any), { keep: true, uncertain: true });
+});

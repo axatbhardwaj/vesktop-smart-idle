@@ -85,10 +85,13 @@ Selected voice-channel membership conservatively includes join/reconnect
 transitions; it does not prove a connected voice transport.
 
 Missing, malformed, or throwing store getters **warn and keep awake** while
-the renderer remains healthy. Any main-document iframe or detected Discord
-popout also keeps awake conservatively: playback inside these surfaces is
-uncertain. Hidden/autoplay videos, unrelated embeds, or paused popouts may
-therefore over-inhibit. Undetected playback in other windows or documents is
+the renderer remains healthy. Main-document iframes and detected Discord
+popouts also keep awake conservatively. The sole iframe exception is a hidden,
+readable `about:blank` document with absent `src`/`srcdoc`, only its normal
+head/body elements, and no content in either. It is checked again each poll;
+media, navigation, visible styling, or unavailable DOM restores protection.
+Playback inside other frames or popouts remains uncertain. Hidden/autoplay
+videos, unrelated embeds, or paused popouts may therefore over-inhibit. Undetected playback in other windows or documents is
 not covered. Notifications are deduplicated for each condition until the
 plugin is enabled again.
 
