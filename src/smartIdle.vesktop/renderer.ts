@@ -21,7 +21,7 @@ export function observe(stores: Sources, document: Pick<Document, "querySelector
             if (frame.getAttribute("src") !== null || frame.getAttribute("srcdoc") !== null) return true;
             const style = frame.ownerDocument.defaultView?.getComputedStyle(frame);
             const child = frame.contentDocument;
-            // Discord inserts hidden blank implementation frames. Exempt only proven empty ones.
+            // Exempt a hidden implementation frame only when its document is proven empty.
             const hidden = style?.display === "none" || style?.visibility === "hidden";
             return !(hidden && child?.URL === "about:blank" &&
                 child.documentElement?.children.length === 2 &&
