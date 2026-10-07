@@ -17,8 +17,16 @@ export function observe(stores: Sources, document: Pick<Document, "querySelector
             [muted, deaf, camera, sharing].some(v => typeof v !== "boolean") ||
             (stream != null && typeof stream !== "object")) throw Error("Unknown store shape");
         const video = Array.from(document.querySelectorAll("video")).some(v => !v.paused && !v.ended);
-        // Frame playback is inaccessible; even a paused embed may over-inhibit.
-        const uncertain = document.querySelectorAll("iframe").length > 0;
+        const uncertain = Array.from(document.querySelectorAll("iframe")).some(frame => {
+            if (frame.getAttribute("src") !== null || frame.getAttribute("srcdoc") !== null) return true;
+            const style = frame.ownerDocument.defaultView?.getComputedStyle(frame);
+            const child = frame.contentDocument;
+            // Exempt a hidden implementation frame only when its document is proven empty.
+            const hidden = style?.display === "none" || style?.visibility === "hidden";
+            return !(hidden && child?.URL === "about:blank" &&
+                child.documentElement?.children.length === 2 &&
+                child.head?.childNodes.length === 0 && child.body?.childNodes.length === 0);
+        });
         return { keep: Boolean(video || camera || sharing || stream || (channel && !muted && !deaf) || uncertain), uncertain };
     } catch {
         return { keep: true, uncertain: true };
