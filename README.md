@@ -34,12 +34,26 @@ revision is still checked. Vencord source and build outputs are not vendored.
 In Vesktop, open **Settings → Vesktop Settings → Developer Options →
 Vencord Location** and choose the new checkout's `dist` directory. Use the
 existing picker; do not edit `settings.json`. The picker persists
-`state.store.vencordDir` and requires these four files:
+`state.store.vencordDir`. Select or copy the **whole `dist` directory**, keeping
+its metadata and sidecars alongside these four bundles:
 
 - `vencordDesktopMain.js`
 - `vencordDesktopPreload.js`
 - `vencordDesktopRenderer.js`
 - `vencordDesktopRenderer.css`
+
+Installed Vesktop 1.6.7 also requires `package.json` in that directory; missing
+metadata can trigger a stock Vencord download that replaces the custom build.
+The pinned upstream build may omit it. For the new build above, preserve any
+existing metadata or create the empty metadata used by that Vesktop version:
+
+```sh
+[ -e .build/dist/package.json ] || printf '{}\n' > .build/dist/package.json
+```
+
+Keep this file with the entire `dist` when installing, updating, or retaining
+a rollback build. This requirement is verified for Vesktop 1.6.7, rather than
+assumed for every Vesktop version.
 
 Fully quit Vesktop, then launch it with:
 
