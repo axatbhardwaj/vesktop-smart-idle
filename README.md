@@ -84,7 +84,8 @@ A direct launch with the flag is sufficient; this repository edits no flags.
 
 ## Policy and limitations
 
-`keep = video || sharing || (connected && !selfMuted && !selfDeaf)`.
+With known observations,
+`keep = video || sharing || ownActiveStream || (connected && !selfMuted && !selfDeaf)`.
 Camera transmission counts as video. Media wins over mute/deafen, including
 muted playing video elements. Push-to-talk silence and server mute do not
 permit idle; self mute or self deafen does when no media needs protection.
@@ -93,8 +94,9 @@ The renderer polls every two seconds. It reads
 `SelectedChannelStore.getVoiceChannelId`, `MediaEngineStore.isSelfMute`,
 `isSelfDeaf`, `isVideoEnabled`, `isScreenSharing`, and
 `ApplicationStreamingStore.getCurrentUserActiveStream`. It observes playing
-main-document `<video>` elements without reading tracks or account/session
-identifiers. It never infers watching from advertised remote streams.
+main-document light-DOM `<video>` elements without reading tracks or
+account/session identifiers. Queries do not cover shadow DOM, detached media,
+or WebAudio. It never infers watching from advertised remote streams.
 Selected voice-channel membership conservatively includes join/reconnect
 transitions; it does not prove a connected voice transport.
 
@@ -139,9 +141,9 @@ external watchdog runs. Window replacement or address reuse is refused;
 fully exit and restart to establish a new binding.
 
 **Tray-hidden/unmapped operation is unsupported and unverified.** Keep the
-main window mapped for protection. Screen sharing under X11 ozone, real
-Discord stream playback semantics, and actual desktop idle actions need
-live verification; a source build and mock-boundary tests do not prove them.
+main window mapped for protection. Remote Discord video/stream playback,
+camera, and screen sharing under X11 ozone still need live verification;
+a source build and mock-boundary tests do not prove them.
 On Omarchy, check the current Quickshell idle service and its
 `respectInhibitors` setting, not an obsolete hypridle configuration.
 
@@ -168,8 +170,17 @@ plugin entry point, IPC controller, and mocked Electron/compositor boundaries.
 CI also runs the pinned upstream build and checks all four desktop artifacts.
 The reference Vesktop revision is
 `a02035be2083e09666ed250bd977325c35f5be95`. Build compatibility is established
-for the Vencord pin above; real Discord/Vesktop runtime compatibility remains
-unverified. Hyprland's actual idle timing is also unverified.
+for the Vencord pin above.
+
+**Live verification — 2026-10-08:** Vesktop 1.6.7 on Hyprland/XWayland with
+Omarchy ran the installed `bbf92d0` build from [PR #4](https://github.com/axatbhardwaj/vesktop-smart-idle/pull/4).
+An actual screensaver appeared at about 172 seconds. All 352 samples over
+183.61 seconds showed zero Vesktop idle inhibition, with the configured
+150-second screensaver and 300-second lock timers unchanged. The user
+confirmed they remained joined, self-muted and self-deafened; voice state was
+not inspected through debug stores. This is one observed idle result, not a
+guaranteed activation time or a fresh check of the full voice/media transition
+matrix. Remote playback, camera, sharing, and tray behavior remain unverified.
 
 Before relying on protection, check in your own session:
 
